@@ -88,6 +88,24 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn event-set
+  "Takes :events in its typical form (organized by markers with relative
+   offsets) and transforms it into a single set of events with absolute
+   offsets."
+  [events-map]
+  (into #{}
+    (mapcat (fn [[_ {:keys [offset events]}]]
+              (for [event events]
+                (update-in event [:offset] absolute-offset))))
+    events-map))
+
+(defn markers
+  [events-map]
+  (into {}
+    (map (fn [[marker-name {marker-offset :offset}]]
+           [marker-name (absolute-offset marker-offset)]))
+    events-map))
+
 (defn shift-events
   [events offset cut-off]
   (let [offset  (or offset 0)
@@ -146,7 +164,7 @@
 (defn- score-length
   "Calculates the length of a score in ms."
   [{:keys [events] :as score}]
-  (let [events   (filter :duration events)
+  (let [events   (->> events event-set (filter :duration))
         note-end (fn [{:keys [offset duration] :as note}]
                    (+ offset duration))]
     (if (and events (not (empty? events)))
@@ -188,8 +206,10 @@
 
    Returns a function that, when called mid-playback, will stop any further
    events from playing."
-  [{:keys [events markers instruments] :as score}]
-  (let [{:keys [pre-buffer post-buffer one-off? async?]} *play-opts*
+  [{:keys [events instruments] :as score}]
+  (let [events      (event-set events)
+        markers     (markers events)
+        {:keys [pre-buffer post-buffer one-off? async?]} *play-opts*
         audio-types (determine-audio-types score)
         _           (set-up! audio-types score)
         _           (refresh! audio-types score)

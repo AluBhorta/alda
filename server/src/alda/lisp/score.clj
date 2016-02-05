@@ -1,59 +1,45 @@
 (ns alda.lisp.score
-  (:require [alda.lisp.model.offset  :refer (absolute-offset)]
-            [alda.lisp.model.records :refer (->AbsoluteOffset)]
-            [alda.lisp.score.context :refer :all]
-            [taoensso.timbre         :as    log]))
+  (:require [alda.lisp.model.event   :refer (update-score)]
+            [alda.lisp.model.offset  :refer (absolute-offset)]
+            [alda.lisp.model.records :refer (->AbsoluteOffset)]))
 
-;; for alda.repl use ;;
-
-(defn score-text<< [s]
-  (if (empty? *score-text*)
-    (alter-var-root #'*score-text* str s)
-    (alter-var-root #'*score-text* str \newline s)))
-
-;;;;;;;;;;;;;;;;;;;;;;;
-
-(defn score*
+(defn new-score
   []
-  (load-score-context new-score-context))
+  {:events              {:start {:offset (->AbsoluteOffset 0), :events []}}
+   :time-scaling        1 ; can be altered inside of a CRAM expression
+   :beats-tally         nil ; used when tallying beats in a CRAM expression
+   :global-attributes   {} ; a map of offsets to the global attribute changes
+                           ; that occur (for all instruments) at each offset
+   :current-instruments #{}
+   :instruments         {}
+   :nicknames           {}})
 
-(defn event-set
-  "Takes *events* in its typical form (organized by markers with relative
-   offsets) and transforms it into a single set of events with absolute
-   offsets."
-  [events-map]
-  (into #{}
-        (mapcat (fn [[_ {:keys [offset events]}]]
-                  (for [event events]
-                    (update-in event [:offset] absolute-offset))))
-        events-map))
+(defn continue
+  "Continues the score represented by the score map `score`, evaluating the
+   events in `body` and returning the completed score."
+  [score & body]
+  (reduce update-score score body))
 
-(defn markers [events-map]
-  (into {}
-        (map (fn [[marker-name {marker-offset :offset}]]
-               [marker-name (absolute-offset marker-offset)]))
-        events-map))
+(defn continue!
+  "Convenience function for dealing with Alda scores stored in atoms.
 
-(defn score-map
-  []
-  (if (bound? #'*events*)
-    {:events (event-set *events*)
-     :markers (markers *events*)
-     :instruments *instruments*}
-    (log/error "A score must be initialized with (score*) before you can use (score-map).")))
+   (continue! my-score
+     (part 'bassoon'
+       (note (pitch :c))))
 
-(defmacro score
-  "Initializes a new score, evaluates body, and returns the map containing the
-   set of events resulting from evaluating the score, and information about the
-   instrument instances, including their states at the end of the score.
+   is short for:
 
-   Restores the score evaluation context back to the way it was afterwards, so
-   that score evaluation is a self-contained, pseudo-immutable process."
+   (apply swap! my-score continue
+     (part 'bassoon'
+       (note (pitch :c))))"
+  [score-atom & body]
+  (apply swap! score-atom continue body))
+
+(defn score
+  "Initializes a new score, evaluates the events contained in `body` (updating
+   the score accordingly) and returns the completed score.
+
+   A score and its evaluation context are effectively the same thing. This
+   means that an evaluated score can be used as an input to `continue-score`"
   [& body]
-  `(let [previous-ctx# (score-context)
-         score-map# (do
-                      (score*)
-                      ~@body
-                      (score-map))]
-     (load-score-context previous-ctx#)
-     score-map))
+  (apply continue (new-score) body))

@@ -33,5 +33,4 @@
   (require ns)
   (import-all-vars ns))
 
-; bookmark: adding ns's to the doseq expression above
-; alda.lisp.events.fn is next
+

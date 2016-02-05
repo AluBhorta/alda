@@ -1,16 +1,14 @@
 (ns alda.lisp.attributes
-  (:require [alda.lisp.model.attribute        :refer (set-attribute)]
+  (:require [alda.lisp.model.attribute        :refer (set-attribute
+                                                      *attribute-table*)]
             [alda.lisp.model.global-attribute :refer (global-attribute)]
             [alda.lisp.model.key              :refer (get-key-signature)]
             [alda.lisp.model.records          :refer (->AbsoluteOffset
-                                                      ->AttributeChange)]
-            [alda.lisp.score.context          :refer (*current-instruments*
-                                                      *instruments*)]
-            [taoensso.timbre                  :as    log]))
+                                                      ->Attribute)]))
 
-(def ^:dynamic *initial-attr-values* {:current-offset (->AbsoluteOffset 0)
-                                      :last-offset (->AbsoluteOffset 0)
-                                      :current-marker :start})
+(def ^:dynamic *initial-attr-vals* {:current-offset (->AbsoluteOffset 0)
+                                    :last-offset    (->AbsoluteOffset 0)
+                                    :current-marker :start})
 
 (defmacro defattribute
   "Convenience macro for setting up attributes."
@@ -18,42 +16,28 @@
   (let [{:keys [aliases kw initial-val fn-name transform] :as opts}
         (if (string? (first things)) (rest things) things)
         aliases      (or aliases [])
-        attr-aliases (vec (cons (keyword attr-name) aliases))
         kw-name      (or kw (keyword attr-name))
+        attr-aliases (vec (cons kw-name aliases))
         transform-fn (or transform #(constantly %))
         getter-fn    (symbol (str \$ attr-name))
         fn-name      (or fn-name attr-name)
         fn-names     (vec (cons fn-name (map (comp symbol name) aliases)))
-        global-fns   (vec (map (comp symbol #(str % \!)) fn-names))]
+        global-fns   (vec (map (comp symbol #(str % \!)) fn-names))
+        attr         (->Attribute kw-name transform-fn)]
     (list* 'do
-      `(alter-var-root (var *initial-attr-values*) assoc ~kw-name ~initial-val)
+      `(alter-var-root (var *initial-attr-vals*) assoc ~kw-name ~initial-val)
       `(doseq [alias# ~attr-aliases]
-         (defmethod set-attribute alias# [attr# val#]
-           (doall
-             (for [instrument# *current-instruments*]
-               (let [old-val# (-> (*instruments* instrument#) ~kw-name)
-                     new-val# ((~transform-fn val#) old-val#)]
-                 (alter-var-root (var *instruments*) assoc-in
-                                                     [instrument# ~kw-name]
-                                                     new-val#)
-                 (if (not= old-val# new-val#)
-                   (log/debug (format "%s %s changed from %s to %s."
-                                      instrument#
-                                      ~(str attr-name)
-                                      old-val#
-                                      new-val#)))
-                 (->AttributeChange instrument# ~(keyword attr-name)
-                                    old-val# new-val#))))))
+         (alter-var-root (var *attribute-table*) assoc alias# ~attr))
       `(defn ~getter-fn
-         ([] (~getter-fn (first *current-instruments*)))
-         ([instrument#] (-> (*instruments* instrument#) ~kw-name)))
+         ([score#] (~getter-fn (first (:current-instruments score#))))
+         ([score# instrument#] (-> score# :instruments instrument# ~kw-name)))
        (concat
          (for [fn-name fn-names]
            `(defn ~fn-name [x#]
-              (set-attribute ~(keyword attr-name) x#)))
+              (set-attribute ~kw-name x#)))
          (for [global-fn-name global-fns]
            `(defn ~global-fn-name [x#]
-              (global-attribute ~(keyword attr-name) x#)))))))
+              (global-attribute ~kw-name x#)))))))
 
 (defn- percentage [x]
   {:pre [(<= 0 x 100)]}
@@ -136,7 +120,7 @@
       (string? key-sig)
       (into {}
         (map (fn [[_ _ letter accidentals]]
-               [(keyword letter) 
+               [(keyword letter)
                 (map {\- :flat \+ :sharp \= :natural} accidentals)])
              (re-seq #"(([a-g])([+-=]*))" key-sig)))
 

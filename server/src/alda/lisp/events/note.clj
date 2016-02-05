@@ -12,6 +12,49 @@
                                               *current-instruments*)]
             [taoensso.timbre          :as    log]))
 
+(defmethod update-score :note
+  [{:keys [beats-tally current-instruments time-scaling] :as score}
+   {:keys [beats ms] :as event}]
+  (if beats-tally
+    (update score :beats-tally + beats)
+    (update score :instruments
+            into {}
+            map (fn [[id {:keys [duration tempo current-offset last-offset
+                                 current-marker] :as inst}]]
+                  (if (contains? current-instruments id)
+                    (let [rest-duration (calculate-duration beats
+                                                            tempo
+                                                            time-scaling
+                                                            ms)]
+                      (log/debug (format "%s rests at %s + %s for %s ms."
+                                         id
+                                         current-marker
+                                         (int (:offset last-offset))
+                                         (int rest-duration)))
+                      [id (-> inst
+                              (assoc :duration beats)
+                              (assoc :last-offset current-offset)
+                              (assoc :current-offset (offset+ current-offset
+                                                              rest-duration)))])
+                    [id inst])))))
+
+(defn note
+  "Causes every instrument in :current-instruments to play a note at its
+   :current-offset for the specified duration.
+
+   If no duration is specified, the note is played for the instrument's own
+   internal duration, which will be the duration last specified on a note or
+   rest in that instrument's part."
+  ([pitch-fn]
+    "TODO: make this fn construct a note event map"
+    (note* instrument
+           pitch-fn
+           false))
+  "TODO:
+    * add note event to each current instrument
+    * adjust current/last offset of each current instrument
+    * set duration of each current instrument")
+
 (defn note*
   ([instrument pitch-fn]
    {:pre [(fn? pitch-fn)]}
@@ -60,12 +103,3 @@
           event)
         (alter-var-root #'*beats-tally* + beats)))))
 
-(defmacro note
-  [& args]
-  `(doall
-     (for [instrument# (if (and *beats-tally*
-                                (not (empty? *current-instruments*)))
-                         [(first *current-instruments*)]
-                         *current-instruments*)]
-       (binding [*current-instruments* #{instrument#}]
-         (note* instrument# ~@args)))))
